@@ -137,17 +137,30 @@ namespace ARMClient
                         X509Certificate2 certificate = null;
                         var appKey = _parameters.Get(3, keyName: "appKey", requires: false);
                         string resource = null;
-                        if (appKey != null && appKey.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                        if (appKey != null)
                         {
-                            resource = appKey;
-                            appKey = _parameters.Get(4, keyName: "appKey", requires: false);
+                            if (appKey.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                            {
+                                resource = appKey;
+                                appKey = _parameters.Get(4, keyName: "appKey", requires: false);
+                            }
+                            else if (Regex.IsMatch(appKey, "\\b[0-9A-Fa-f]{40}\\b"))
+                            {
+                                var storeLocation = _parameters.Get(4, keyName: "storeLocation", requires: false);
+                                var storeName = _parameters.Get(5, keyName: "storeName", requires: false);
+                                if (!string.Equals(storeLocation, "LocalMachine") && !string.Equals(storeLocation, "CurrentUser") || string.IsNullOrWhiteSpace(storeName))
+                                {
+                                    throw new CommandLineException("With a cert thumbprint, you must pass a storeLocation of either CurrentUser or LocalMachine and a valid storeName in which to look for the cert.");
+                                }
+                                certificate = LoadCertificateFromCertStore(appKey, storeLocation, storeName);
+                            }
                         }
 
                         if (appKey == null)
                         {
                             appKey = PromptForPassword("appKey");
                         }
-                        else
+                        else if (certificate == null)
                         {
                             if (File.Exists(appKey))
                             {
@@ -249,6 +262,25 @@ namespace ARMClient
             {
                 DumpException(ex);
                 return -1;
+            }
+        }
+
+        static X509Certificate2 LoadCertificateFromCertStore(string thumbprint, string storeLocation, string storeName)
+        {
+            X509Store store = new X509Store(storeName, (StoreLocation)Enum.Parse(typeof(StoreLocation), storeLocation));
+            try
+            {
+                store.Open(OpenFlags.IncludeArchived);
+                X509Certificate2Collection certCollection = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
+                if (certCollection.Count > 0)
+                {
+                    return certCollection[0];
+                }
+                throw new Exception($"Could not find certificate with thumbprint {thumbprint} in {storeLocation}\\{storeName}");
+            }
+            finally
+            {
+                store.Close();
             }
         }
 
